@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>One More Try — FrontSocket + WebRTC (Redis Matchmaking)</title>
+  <style>
+    :root{ --bg:#0f1724; --card:#0b1220; --accent:#7c3aed; --muted:#94a3b8; --glass: rgba(255,255,255,0.04);} 
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;color:#e6eef8;background:linear-gradient(180deg,#071022 0%, #07162a 60%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+
+    .container{width:1000px;max-width:100%;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:14px;box-shadow:0 8px 30px rgba(2,6,23,0.7);overflow:hidden;display:grid;grid-template-columns:1fr 360px}
+
+    .left{padding:18px;display:flex;flex-direction:column;gap:12px}
+    .video-wrap{background:var(--card);border-radius:10px;padding:12px;display:flex;gap:12px;align-items:flex-start}
+    .video-col{flex:1;display:flex;flex-direction:column;gap:10px}
+    .video{background:linear-gradient(180deg,#0b1220,#091726);height:260px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px;border:1px solid rgba(255,255,255,0.03);overflow:hidden}
+    video{width:100%;height:100%;object-fit:cover}
+
+    .controls{display:flex;gap:10px;align-items:center}
+    .btn{background:linear-gradient(90deg,var(--accent),#4f46e5);border:none;color:white;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+
+    .chat{background:var(--glass);border-radius:8px;padding:12px;height:180px;overflow:auto;border:1px solid rgba(255,255,255,0.03)}
+    .chat .msg{margin-bottom:8px}
+    .chat .mine{text-align:right}
+
+    .right{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);padding:18px;border-left:1px solid rgba(255,255,255,0.02);display:flex;flex-direction:column;gap:12px}
+    .info{color:var(--muted);font-size:14px}
+    .status{display:flex;gap:8px;align-items:center}
+    .status .dot{width:10px;height:10px;border-radius:50%;background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,0.12)}
+
+    .try-card{margin-top:auto;background:linear-gradient(180deg, rgba(124,58,237,0.08), rgba(124,58,237,0.04));padding:14px;border-radius:10px;border:1px solid rgba(124,58,237,0.08)}
+
+    .logs{background:#051024;border-radius:8px;padding:10px;height:120px;overflow:auto;border:1px solid rgba(255,255,255,0.03);font-size:13px}
+    input[type=text]{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);background:transparent;color:inherit}
+
+    .searching{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(124,58,237,0.12);color:var(--accent);font-weight:700}
+
+    @media (max-width:880px){.container{grid-template-columns:1fr;}.video{height:220px}.right{order:3}.left{order:1}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="left">
+      <div class="video-wrap">
+        <div class="video-col">
+          <div class="video" id="localContainer">
+            <video id="localVideo" autoplay muted playsinline></video>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn" id="startCam">Start Camera</button>
+            <button class="btn ghost" id="toggleMic">Mute Mic</button>
+            <button class="btn ghost" id="hangupBtn">Hang up</button>
+          </div>
+        </div>
+
+        <div style="width:240px;display:flex;flex-direction:column;gap:8px">
+          <div style="font-weight:700">Session</div>
+          <div class="info">ID: <span id="sessionId">—</span></div>
+          <div class="info">Latency: <span id="latency">—</span></div>
+
+          <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+            <input id="wsUrl" type="text" value="ws://localhost:8765" style="flex:1" />
+            <button class="btn" id="connectBtn">Connect</button>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+            <button class="btn ghost" id="findMatchBtn">Find Match</button>
+            <button class="btn ghost" id="mockBtn">Use Mock Server</button>
+          </div>
+
+          <div style="margin-top:6px"><span id="searchStatus"></span></div>
+        </div>
+      </div>
+
+      <div class="video" style="height:160px;margin-top:8px">
+        <video id="remoteVideo" autoplay playsinline></video>
+      </div>
+
+      <div class="chat" id="chatBox">
+        <div class="msg">System: Welcome to OneMoreTry (WebRTC + Redis matchmaking).</div>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="chatInput" placeholder="Type message..." style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:transparent;color:inherit" />
+        <button class="btn" id="sendBtn">Send</button>
+      </div>
+    </div>
+
+    <div class="right">
+      <div>
+        <div style="font-weight:800;font-size:18px">OneMoreTry — WebRTC + Redis</div>
+        <div class="info" style="margin-top:6px">Integrated Redis-based matchmaking. Start camera, connect to the signalling server, then click "Find Match" to enter the matchmaking queue (Redis). Server will pair two waiting users and forward signalling messages.</div>
+      </div>
+
+      <div class="status">
+        <div class="dot" id="connDot"></div>
+        <div class="info" id="connText">Disconnected</div>
+      </div>
+
+      <div class="try-card">
+        <h3>Matchmaking</h3>
+        <p>Flow: client -> send <code>find_match</code> -> server uses Redis queue <code>waiting_users</code> -> when partner found server sends <code>match_found</code> (with <code>peer</code> and <code>initiator</code>).</p>
+      </div>
+
+      <div style="margin-top:10px">
+        <div style="font-weight:700;margin-bottom:6px">Connection logs</div>
+        <div class="logs" id="logArea"></div>
+      </div>
+
+      <details style="margin-top:10px">
+        <summary>Sample signalling server (Node.js + Redis)</summary>
+        <div style="margin-top:8px;font-size:13px;color:var(--muted)">
+<pre style="background:#001;padding:8px;border-radius:6px;color:#cfe">// server.js
+// npm i ws ioredis
+const WebSocket = require('ws');
+const Redis = require('ioredis');
+const redis = new Redis();
+
+const wss = new WebSocket.Server({ port: 8765 });
+console.log('Signalling server with Redis running on ws://localhost:8765');
+
+// Store mapping clientId -> ws in memory (simple). In production use shared store or sticky sessions.
+const clients = new Map();
+
+wss.on('connection', (ws) => {
+  ws.on('message', async (raw) => {
+    let msg; try{ msg = JSON.parse(raw); } catch(e){ return; }
+
+    // handle join/connect
+    if(msg.type === 'join'){
+      ws.clientId = msg.client;
+      clients.set(ws.clientId, ws);
+      // reply status
+      ws.send(JSON.stringify({type:'status', text:'joined'}));
+    }
+
+    // matchmaking request
+    if(msg.type === 'find_match'){
+      // try to pop a waiting user
+      const partnerId = await redis.lpop('waiting_users');
+      if(!partnerId){
+        // push self to waiting list
+        await redis.rpush('waiting_users', ws.clientId);
+        ws.send(JSON.stringify({type:'waiting'}));
+      } else {
+        // found partner -> create room and notify both
+        const roomId = 'room:' + Date.now() + ':' + Math.random().toString(36).slice(2,6);
+        // mark room on both ws objects (in-memory)
+        const partnerWs = clients.get(partnerId);
+        if(partnerWs && partnerWs.readyState === WebSocket.OPEN){
+          ws.roomId = roomId; partnerWs.roomId = roomId;
+          // send match_found with partner id and initiator flag (decide on server or client)
+          ws.send(JSON.stringify({type:'match_found', peer: partnerId, initiator: true, roomId}));
+          partnerWs.send(JSON.stringify({type:'match_found', peer: ws.clientId, initiator: false, roomId}));
+        } else {
+          // partner not online, try again recursively
+          await redis.lrem('waiting_users', 0, partnerId);
+          ws.send(JSON.stringify({type:'waiting'}));
+        }
+      }
+    }
+
+    // relay signalling (offer/answer/ice/chat)
+    if(['offer','answer','ice','chat','try_again'].includes(msg.type)){
+      // if 'to' is present use that, else try to find peer in same room
+      let target = null;
+      if(msg.to){ target = clients.get(msg.to); }
+      if(!target && ws.roomId){
+        // find other client in same room
+        for(const [id, cws] of clients.entries()){
+          if(cws !== ws && cws.roomId === ws.roomId){ target = cws; break; }
+        }
+      }
+      if(target && target.readyState === WebSocket.OPEN){
+        target.send(JSON.stringify(msg));
+      }
+    }
+
+  }); // end message
+
+  ws.on('close', async () => {
+    try{ if(ws.clientId) clients.delete(ws.clientId); } catch(e){}
+    // remove from waiting queue if present
+    try{ if(ws.clientId) await redis.lrem('waiting_users', 0, ws.clientId); } catch(e){}
+  });
+});
+</pre>
+      </div>
+      </details>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay" style="display:none">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle">One More Try?</h2>
+      <p>Do you want to try connecting with another partner now? This will end the current session and look for a new one.</p>
+      <div class="actions">
+        <button class="btn ghost" id="cancelModal">Cancel</button>
+        <button class="btn" id="confirmModal">Yes, try again</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // WebSocket + WebRTC client (frontend) with Redis matchmaking hooks
+    const wsUrlInput = document.getElementById('wsUrl');
+    const connectBtn = document.getElementById('connectBtn');
+    const mockBtn = document.getElementById('mockBtn');
+    const findMatchBtn = document.getElementById('findMatchBtn');
+    const overlay = document.getElementById('overlay');
+    const cancelModal = document.getElementById('cancelModal');
+    const confirmModal = document.getElementById('confirmModal');
+    const connDot = document.getElementById('connDot');
+    const connText = document.getElementById('connText');
+    const sessionId = document.getElementById('sessionId');
+    const latency = document.getElementById('latency');
+    const chatBox = document.getElementById('chatBox');
+    const chatInput = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const logArea = document.getElementById('logArea');
+    const startCam = document.getElementById('startCam');
+    const toggleMic = document.getElementById('toggleMic');
+    const hangupBtn = document.getElementById('hangupBtn');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const searchStatus = document.getElementById('searchStatus');
+
+    let ws = null;
+    let clientId = null;
+    let usingMock = false;
+    let pc = null; // RTCPeerConnection
+    let localStream = null;
+    let remoteStream = null;
+    let isInitiator = false;
+    let searching = false;
+
+    const pcConfig = { iceServers: [{urls: 'stun:stun.l.google.com:19302'}] };
+
+    function log(msg){ const el=document.createElement('div'); el.textContent='['+new Date().toLocaleTimeString()+'] '+msg; logArea.appendChild(el); logArea.scrollTop=logArea.scrollHeight; }
+    function appendSystem(text){ const d=document.createElement('div'); d.className='msg'; d.textContent='System: '+text; chatBox.appendChild(d); chatBox.scrollTop=chatBox.scrollHeight; }
+    function appendMine(text){ const d=document.createElement('div'); d.className='msg mine'; d.textContent='You: '+text; chatBox.appendChild(d); chatBox.scrollTop=chatBox.scrollHeight; }
+    function appendPeer(text){ const d=document.createElement('div'); d.className='msg'; d.textContent='Stranger: '+text; chatBox.appendChild(d); chatBox.scrollTop=chatBox.scrollHeight; }
+
+    function setConnectedUI(v){ connDot.style.background = v ? '#16a34a' : '#ef4444'; connText.textContent = v ? 'Connected' : 'Disconnected'; connectBtn.textContent = v ? 'Disconnect' : 'Connect'; latency.textContent = v ? Math.floor(Math.random()*150)+' ms':'—'; }
+
+    // safe send via websocket
+    function safeSend(obj){ if(!ws) return false; try{ ws.send(JSON.stringify(obj)); return true; } catch(e){ log('safeSend error: '+e.message); return false; } }
+
+    // -------------------- Media --------------------
+    async function startLocalMedia(){
+      try{
+        localStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+        localVideo.srcObject = localStream;
+        appendSystem('Local camera started');
+        // enable toggle mic button
+        toggleMic.textContent = 'Mute Mic';
+      } catch(e){
+        appendSystem('getUserMedia failed: ' + (e.message||e));
+        log('getUserMedia error: '+(e.stack||e.message||e));
+      }
+    }
+
+    function stopLocalMedia(){ if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; localVideo.srcObject=null; appendSystem('Local media stopped'); } }
+
+    function toggleMicrophone(){ if(!localStream) return; const audioTrack = localStream.getAudioTracks()[0]; if(!audioTrack) return; audioTrack.enabled = !audioTrack.enabled; toggleMic.textContent = audioTrack.enabled ? 'Mute Mic' : 'Unmute Mic'; }
+
+    startCam.addEventListener('click', ()=>{ if(!localStream) startLocalMedia(); else { stopLocalMedia(); } });
+    toggleMic.addEventListener('click', ()=> toggleMicrophone());
+    hangupBtn.addEventListener('click', ()=>{ closePeerConnection(); appendSystem('Call ended'); });
+
+    // --------------------- Peer Connection & signalling ---------------------
+    function createPeerConnection(){
+      pc = new RTCPeerConnection(pcConfig);
+      remoteStream = new MediaStream();
+      remoteVideo.srcObject = remoteStream;
+
+      pc.onicecandidate = (e)=>{ if(e.candidate){ safeSend({type:'ice', candidate:e.candidate, from:clientId, to:peerId}); } };
+      pc.ontrack = (e)=>{ e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t)); };
+      pc.onconnectionstatechange = ()=>{ log('PC state: '+pc.connectionState); if(pc.connectionState === 'disconnected' || pc.connectionState === 'failed') closePeerConnection(); };
+
+      // add local tracks
+      if(localStream){ localStream.getTracks().forEach(t=> pc.addTrack(t, localStream)); }
+    }
+
+    function closePeerConnection(){ if(pc){ try{ pc.getSenders().forEach(s=> s.track && s.track.stop()); pc.close(); } catch(e){} pc=null; } remoteVideo.srcObject = null; remoteStream = null; }
+
+    let peerId = null; // id of connected peer
+
+    async function handleMatched(peer){
+      peerId = peer;
+      appendSystem('Matched with ' + peer);
+      // decide initiator: simple rule - server should set initiator, but fallback to client compare
+      isInitiator = isInitiator || (clientId && peerId ? (clientId > peerId) : false);
+      appendSystem('Initiator? ' + isInitiator);
+      // create pc
+      createPeerConnection();
+      if(isInitiator){
+        try{
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          safeSend({type:'offer', from: clientId, to: peerId, sdp: offer});
+        } catch(e){ log('Offer error: '+e.message); }
+      }
+    }
+
+    async function handleOffer(msg){
+      peerId = msg.from;
+      createPeerConnection();
+      try{
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        safeSend({type:'answer', from: clientId, to: peerId, sdp: answer});
+      } catch(e){ log('handleOffer error: '+e.message); }
+    }
+
+    async function handleAnswer(msg){
+      try{
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      } catch(e){ log('handleAnswer error: '+e.message); }
+    }
+
+    async function handleIce(msg){
+      try{
+        if(msg.candidate){
+          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+        }
+      } catch(e){ log('addIceCandidate error: '+e.message); }
+    }
+
+    // -------------------- WebSocket --------------------
+    function connectTo(url){
+      clientId = 'c_' + Math.random().toString(36).slice(2,9);
+      log('Connecting to ' + url + ' as ' + clientId);
+      appendSystem('Opening WebSocket to ' + url);
+      try{ ws = new WebSocket(url); } catch(e){ appendSystem('Invalid WS URL or blocked by browser.'); log('WS ctor error: '+e.message); return; }
+
+      ws.addEventListener('open', ()=>{
+        appendSystem('WS open, sending join');
+        setConnectedUI(true);
+        sessionId.textContent = clientId;
+        safeSend({type:'join', client: clientId});
+      });
+
+      ws.addEventListener('message', async (ev)=>{
+        let msg; try{ msg = JSON.parse(ev.data); } catch(e){ appendSystem('Received non-JSON: '+ev.data); return; }
+        log('recv: ' + JSON.stringify(msg).slice(0,200));
+        switch(msg.type){
+          case 'waiting':
+            searching = true; updateSearchUI(); appendSystem('You are in the queue, waiting for a partner...');
+            break;
+          case 'match_found':
+            // server returns {type:'match_found', peer, initiator, roomId}
+            searching = false; updateSearchUI();
+            if(msg.peer) handleMatched(msg.peer);
+            else appendSystem('Matched (no peer id provided)');
+            // server may also provide initiator flag
+            if(typeof msg.initiator === 'boolean') isInitiator = msg.initiator;
+            break;
+          case 'matched':
+            // legacy: server returns {type:'matched', peer}
+            searching = false; updateSearchUI();
+            if(msg.peer) handleMatched(msg.peer);
+            break;
+          case 'offer': handleOffer(msg); break;
+          case 'answer': handleAnswer(msg); break;
+          case 'ice': handleIce(msg); break;
+          case 'chat': appendPeer(msg.text); break;
+          case 'status': appendSystem(msg.text); break;
+          default: log('unknown msg: '+msg.type);
+        }
+      });
+
+      ws.addEventListener('close', ()=>{ appendSystem('WS closed'); setConnectedUI(false); ws=null; });
+      ws.addEventListener('error', (e)=>{ appendSystem('WS error (see console)'); console.error('WS err', e); });
+    }
+
+    connectBtn.addEventListener('click', ()=>{
+      const url = wsUrlInput.value.trim();
+      if(!ws) connectTo(url);
+      else { try{ ws.close(); } catch(e){} ws=null; setConnectedUI(false); appendSystem('Disconnected'); }
+    });
+
+    mockBtn.addEventListener('click', ()=>{ appendSystem('Mock server does not support WebRTC signalling. Use real signalling server for media.'); });
+
+    findMatchBtn.addEventListener('click', ()=>{
+      if(!ws){ appendSystem('Connect to signalling server first'); return; }
+      if(searching){ appendSystem('Already searching...'); return; }
+      safeSend({type:'find_match', client: clientId});
+      appendSystem('Sent find_match to server');
+    });
+
+    sendBtn.addEventListener('click', ()=>{
+      const v = chatInput.value.trim(); if(!v) return; appendMine(v); chatInput.value=''; if(ws) safeSend({type:'chat', from:clientId, text:v, to:peerId}); else appendPeer('nice! (local demo)');
+    });
+
+    chatInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') sendBtn.click(); });
+
+    function updateSearchUI(){ if(searching){ searchStatus.innerHTML = '<span class="searching">Searching for partner…</span>'; findMatchBtn.textContent = 'Searching…'; findMatchBtn.disabled = true; } else { searchStatus.innerHTML = ''; findMatchBtn.textContent = 'Find Match'; findMatchBtn.disabled = false; } }
+
+    // init
+    setConnectedUI(false);
+    log('UI ready. Start camera before connecting if you want media to be shared on match.');
+    window.__om = { connectTo };
+  </script>
+</body>
+</html>
